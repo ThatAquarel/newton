@@ -16,8 +16,6 @@ def main():
         return struct.unpack("<L6h", buf)
 
     data = recv()
-    print(data)
-
     dt, ax, ay, az, wx, wy, wz = data
 
     a = np.array([ax, ay, az], dtype=np.float64) / 256 * 9.81

@@ -1,11 +1,18 @@
+import os
+import struct
+import time
+
 import glfw
 import numpy as np
+import serial
 
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
 
+import dearpygui.dearpygui as dpg
+
 from queue import Empty
-from multiprocessing import Process
+from multiprocessing import Process, Queue, Event
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -93,7 +100,6 @@ def draw_axes():
     glLineWidth(1.0)
     glBegin(GL_LINES)
 
-    # glColor3f(0.0, 0.0, 0.0)
     glColor3f(1.0, 1.0, 1.0)
     for point in _axes_x:
         glVertex3f(*(point) @ T)
@@ -176,7 +182,7 @@ def terminate():
     glfw.terminate()
 
 
-def update(window, draw):
+def update():
     global viewport_left, viewport_right
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -200,42 +206,118 @@ def update(window, draw):
     glRotatef(angle_y, 0.0, 1.0, 0.0)
 
     draw_axes()
-    draw()
-
-    glfw.swap_buffers(window)
-    glfw.poll_events()
 
 
-def main():
+def serial_process(port, stop_event, serial_data):
+    ser = serial.Serial(port=port, baudrate=115200, dsrdtr=os.name != "nt")
+
+    while not stop_event.is_set():
+        ser.read_until(b"\x7E")
+        buf = ser.read(16)
+        if ser.read(1) != b"\x7D":
+            break
+
+        data = struct.unpack("<L6h", buf)
+        serial_data.put((data[0], data[1:]))
+
+    ser.close()
+    stop_event.set()
+
+
+def main(port, buffer_size=2048, sample_dt_buffer_size=128):
+    serial_data = Queue()
+    stop_event = Event()
+
+    serial_manager = Process(
+        target=serial_process,
+        args=(port, stop_event, serial_data),
+        daemon=True,
+    )
+
+    serial_manager.start()
+
     window = init()
     imgui_impl = init_imgui(window)
 
-    while not window_should_close(window):
+    sample_total = 0
+    n, prev_n = 0, buffer_size - 1
+    sample_buffer = np.empty((buffer_size, 6), dtype=np.float64)
+    dt_buffer = np.empty(buffer_size, dtype=np.float64)
 
-        def draw():
-            points = np.array(
-                [
-                    [0, 0, 1],
-                    [0, 1, 0],
-                    [1, 0, 0],
-                    [0, 0, 0],
-                ],
-                dtype=np.float32,
-            )
+    new_data = False
 
-            imgui.new_frame()
-            imgui.begin("ImGui Window")
-            imgui.text("Hello, world!")
-            imgui.end()
-            imgui.render()
-            imgui_impl.process_inputs()
-            imgui_impl.render(imgui.get_draw_data())
+    dt_i = 0
+    sample_dt_buffer = np.zeros(sample_dt_buffer_size, dtype=np.float32)
+    prev_time = time.time()
 
-            draw_points(points)
+    while not stop_event.is_set() and not window_should_close(window):
+        try:
+            data_raw = serial_data.get_nowait()
+            new_data = True
+        except Empty:
+            pass
 
-        update(window, draw)
+        if new_data:
+            current_time = time.time()
+            sample_dt_buffer[dt_i] = current_time - prev_time
+            prev_time = current_time
+            dt_i = (dt_i + 1) % sample_dt_buffer_size
+
+            dt, data = data_raw
+            dt_buffer[n] = dt
+            sample_buffer[n] = data
+
+            n = (n + 1) % buffer_size
+            prev_n = (prev_n + 1) % buffer_size
+            sample_total += 1
+
+            new_data = False
+
+        update()
+
+        # points = np.array(
+        #     [
+        #         [0, 0, 1],
+        #         [0, 1, 0],
+        #         [1, 0, 0],
+        #         [0, 0, 0],
+        #     ],
+        #     dtype=np.float32,
+        # )
+
+        points = sample_buffer[:, 0:3].astype(np.float32) / 256
+
+        imgui.new_frame()
+        imgui.begin("Sampling")
+
+        imgui.text(f"device: {port}")
+        imgui.text(f"total samples: {sample_total}")
+        imgui.text(f"sample rate {1/np.mean(sample_dt_buffer):.2f} Hz")
+
+        imgui.spacing()
+
+        imgui.text(f"current n: {n}")
+        imgui.text(f"prev n: {prev_n}")
+
+        imgui.spacing()
+
+        if imgui.button("Clear buffer"):
+            n, prev_n = 0, buffer_size - 1
+            sample_total = 0
+
+        imgui.end()
+        imgui.render()
+        imgui_impl.process_inputs()
+        imgui_impl.render(imgui.get_draw_data())
+
+        draw_points(points)
+
+        glfw.swap_buffers(window)
+        glfw.poll_events()
+
+    stop_event.set()
     terminate()
 
 
 if __name__ == "__main__":
-    main()
+    main("COM10")
