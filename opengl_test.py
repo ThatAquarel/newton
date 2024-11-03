@@ -12,7 +12,7 @@ from imgui.integrations.glfw import GlfwRenderer
 import dearpygui.dearpygui as dpg
 
 from queue import Empty
-from multiprocessing import Process, Queue, Event, shared_memory
+from multiprocessing import Process, Queue, Event
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -211,11 +211,6 @@ def update():
 def serial_process(port, stop_event, serial_data):
     ser = serial.Serial(port=port, baudrate=115200, dsrdtr=os.name != "nt")
 
-    dt_i = 0
-    sample_dt_buffer_size = 128
-    sample_dt_buffer = np.zeros(sample_dt_buffer_size, dtype=np.float32)
-    prev_time = time.time()
-
     while not stop_event.is_set():
         ser.read_until(b"\x7E")
         buf = ser.read(16)
@@ -245,10 +240,15 @@ def main(port, buffer_size=2048, sample_dt_buffer_size=128):
     imgui_impl = init_imgui(window)
 
     sample_total = 0
+    n, prev_n = 0, buffer_size - 1
     sample_buffer = np.empty((buffer_size, 6), dtype=np.float64)
     dt_buffer = np.empty(buffer_size, dtype=np.float64)
 
     new_data = False
+
+    dt_i = 0
+    sample_dt_buffer = np.zeros(sample_dt_buffer_size, dtype=np.float32)
+    prev_time = time.time()
 
     while not stop_event.is_set() and not window_should_close(window):
         try:
