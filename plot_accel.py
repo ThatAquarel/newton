@@ -90,6 +90,7 @@ def resize_callback(window, width, height):
 
 
 T = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+# T = np.array([[-1, 0, 0], [0, 0, 1], [0, -1, 0]])
 
 
 _axes_y = np.mgrid[0:2, 0:1:11j, 0:1].T.reshape((-1, 3)) - [0.5, 0.5, 0.0]
@@ -107,22 +108,9 @@ def draw_axes():
         glVertex3f(*point @ T)
     glEnd()
 
-    glLineWidth(2.0)
-    glBegin(GL_LINES)
-
-    glColor3f(1.0, 0.0, 0.0)
-    glVertex3f(*[-0.5, 0.0, 0.0] @ T)
-    glVertex3f(*[0.5, 0.0, 0.0] @ T)
-
-    glColor3f(0.0, 1.0, 0.0)
-    glVertex3f(*[0.0, -0.5, 0.0] @ T)
-    glVertex3f(*[0.0, 0.5, 0.0] @ T)
-
-    glColor3f(0.0, 0.0, 1.0)
-    glVertex3f(*[0.0, 0.0, -0.5] @ T)
-    glVertex3f(*[0.0, 0.0, 0.5] @ T)
-
-    glEnd()
+    draw_arrow([-0.5, 0.0, 0.0], [0.5, 0.0, 0.0], [1.0, 0.0, 0.0], 2.0, 5.0)
+    draw_arrow([0.0, -0.5, 0.0], [0.0, 0.5, 0.0], [0.0, 1.0, 0.0], 2.0, 5.0)
+    draw_arrow([0.0, 0.0, -0.5], [0.0, 0.0, 0.5], [0.0, 0.0, 1.0], 2.0, 5.0)
 
 
 aruco_point_color = np.array(
@@ -138,6 +126,33 @@ def draw_points(points):
         glColor3f(*aruco_point_color[i % aruco_point_color.shape[0]])
         glVertex3f(*point @ T)
 
+    glEnd()
+
+
+def draw_line_strip(points, color):
+    points = points @ T
+
+    glBegin(GL_LINE_STRIP)
+    glColor3f(*color)
+
+    for point in points:
+        glVertex3f(*point)
+
+    glEnd()
+
+
+def draw_arrow(start, end, color, line_width, point_size):
+    glLineWidth(line_width)
+    glBegin(GL_LINES)
+    glColor3f(*color)
+    glVertex3f(*start @ T)
+    glVertex3f(*end @ T)
+    glEnd()
+
+    glPointSize(point_size)
+    glBegin(GL_POINTS)
+    glColor3f(*color)
+    glVertex3f(*end @ T)
     glEnd()
 
 
@@ -208,13 +223,34 @@ def update():
     draw_axes()
 
 
-def serial_process(port, stop_event, serial_data):
+def shm_create(_shared, name):
+    shm = shared_memory.SharedMemory(name=name, create=True, size=_shared.nbytes)
+    shared = np.ndarray(_shared.shape, dtype=_shared.dtype, buffer=shm.buf)
+    shared[:] = _shared[:]
+
+    return shm, shared
+
+
+def shm_recv(_shared, name):
+    existing_shm = shared_memory.SharedMemory(name=name)
+    shared = np.ndarray(_shared.shape, dtype=_shared.dtype, buffer=existing_shm.buf)
+    return existing_shm, shared
+
+
+def serial_process(port, stop_event, sr_shm, s_shm):
     ser = serial.Serial(port=port, baudrate=115200, dsrdtr=os.name != "nt")
+
+    print(f"connected serial port: {port}")
+
+    _sr_shm, sample_rate = shm_recv(*sr_shm)
+    _s_shm, samples = shm_recv(*s_shm)
 
     dt_i = 0
     sample_dt_buffer_size = 128
     sample_dt_buffer = np.zeros(sample_dt_buffer_size, dtype=np.float32)
     prev_time = time.time()
+
+    sample_total = 0
 
     while not stop_event.is_set():
         ser.read_until(b"\x7E")
@@ -223,19 +259,42 @@ def serial_process(port, stop_event, serial_data):
             break
 
         data = struct.unpack("<L6h", buf)
-        serial_data.put((data[0], data[1:]))
+        samples[1:] = samples[:-1]
+        samples[0] = data
+
+        sample_total += 1
+
+        current_time = time.time()
+        sample_dt_buffer[dt_i] = current_time - prev_time
+        prev_time = current_time
+        dt_i = (dt_i + 1) % sample_dt_buffer_size
+
+        if dt_i == 0:
+            sample_rate[:] = sample_total, 1 / np.mean(sample_dt_buffer)
 
     ser.close()
+    print("cleaup serial")
+
     stop_event.set()
 
 
-def main(port, buffer_size=2048, sample_dt_buffer_size=128):
+ACC_T = np.eye(3) / -256
+ORIGIN = np.array([0.0, 0.0, 0.0])
+
+
+def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"):
     serial_data = Queue()
     stop_event = Event()
 
+    _sample_rate = np.array([0, 0], dtype=np.float32)
+    sr_shm, sample_rate = shm_create(_sample_rate, sr_shm_name)
+
+    _samples = np.empty((buffer_size, 7), dtype=np.float64)
+    s_shm, samples = shm_create(_samples, s_shm_name)
+
     serial_manager = Process(
         target=serial_process,
-        args=(port, stop_event, serial_data),
+        args=(port, stop_event, (_sample_rate, sr_shm.name), (_samples, s_shm.name)),
         daemon=True,
     )
 
@@ -244,11 +303,7 @@ def main(port, buffer_size=2048, sample_dt_buffer_size=128):
     window = init()
     imgui_impl = init_imgui(window)
 
-    sample_total = 0
-    sample_buffer = np.empty((buffer_size, 6), dtype=np.float64)
-    dt_buffer = np.empty(buffer_size, dtype=np.float64)
-
-    new_data = False
+    show_acc_lin, show_acc_rot = True, False
 
     while not stop_event.is_set() and not window_should_close(window):
         try:
@@ -257,60 +312,30 @@ def main(port, buffer_size=2048, sample_dt_buffer_size=128):
         except Empty:
             pass
 
-        if new_data:
-            current_time = time.time()
-            sample_dt_buffer[dt_i] = current_time - prev_time
-            prev_time = current_time
-            dt_i = (dt_i + 1) % sample_dt_buffer_size
-
-            dt, data = data_raw
-            dt_buffer[n] = dt
-            sample_buffer[n] = data
-
-            n = (n + 1) % buffer_size
-            prev_n = (prev_n + 1) % buffer_size
-            sample_total += 1
-
-            new_data = False
-
         update()
-
-        # points = np.array(
-        #     [
-        #         [0, 0, 1],
-        #         [0, 1, 0],
-        #         [1, 0, 0],
-        #         [0, 0, 0],
-        #     ],
-        #     dtype=np.float32,
-        # )
-
-        points = sample_buffer[:, 0:3].astype(np.float32) / 256
 
         imgui.new_frame()
         imgui.begin("Sampling")
 
         imgui.text(f"device: {port}")
-        imgui.text(f"total samples: {sample_total}")
-        imgui.text(f"sample rate {1/np.mean(sample_dt_buffer):.2f} Hz")
+        ts, sr = sample_rate
+        imgui.text(f"total samples: {ts:.0f}")
+        imgui.text(f"sample rate: {sr:.2f} Hz")
 
         imgui.spacing()
 
-        imgui.text(f"current n: {n}")
-        imgui.text(f"prev n: {prev_n}")
+        _, show_acc_lin = imgui.checkbox("linear accel (g)", show_acc_lin)
+        if show_acc_lin:
+            points = samples[:, 1:4].astype(np.float32) @ ACC_T
+            draw_line_strip(points, (64, 64, 64))
+            draw_arrow(ORIGIN, points[0], (32, 32, 32), 5, 10)
 
-        imgui.spacing()
-
-        if imgui.button("Clear buffer"):
-            n, prev_n = 0, buffer_size - 1
-            sample_total = 0
+        _, show_acc_rot = imgui.checkbox("angular accel (deg/s)", show_acc_rot)
 
         imgui.end()
         imgui.render()
         imgui_impl.process_inputs()
         imgui_impl.render(imgui.get_draw_data())
-
-        draw_points(points)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
