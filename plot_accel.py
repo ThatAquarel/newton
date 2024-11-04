@@ -210,8 +210,8 @@ def update():
         viewport_right * zoom_level,
         -zoom_level,
         zoom_level,
-        -1,
-        1,
+        -10,
+        10,
     )
 
     glMatrixMode(GL_MODELVIEW)
@@ -279,17 +279,19 @@ def serial_process(port, stop_event, sr_shm, s_shm):
 
 
 ACC_T = np.eye(3) / -256
+ROT_T = np.eye(3) / 14.375 * np.pi / 180
+
+WHITE = (1.0, 1.0, 1.0)
 ORIGIN = np.array([0.0, 0.0, 0.0])
 
 
 def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"):
-    serial_data = Queue()
     stop_event = Event()
 
     _sample_rate = np.array([0, 0], dtype=np.float32)
     sr_shm, sample_rate = shm_create(_sample_rate, sr_shm_name)
 
-    _samples = np.empty((buffer_size, 7), dtype=np.float64)
+    _samples = np.empty((buffer_size, 7), dtype=np.float32)
     s_shm, samples = shm_create(_samples, s_shm_name)
 
     serial_manager = Process(
@@ -303,15 +305,9 @@ def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"
     window = init()
     imgui_impl = init_imgui(window)
 
-    show_acc_lin, show_acc_rot = True, False
+    show_acc_lin, show_acc_rot = False, True
 
     while not stop_event.is_set() and not window_should_close(window):
-        try:
-            data_raw = serial_data.get_nowait()
-            new_data = True
-        except Empty:
-            pass
-
         update()
 
         imgui.new_frame()
@@ -322,15 +318,19 @@ def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"
         imgui.text(f"total samples: {ts:.0f}")
         imgui.text(f"sample rate: {sr:.2f} Hz")
 
-        imgui.spacing()
+        imgui.separator()
 
         _, show_acc_lin = imgui.checkbox("linear accel (g)", show_acc_lin)
         if show_acc_lin:
-            points = samples[:, 1:4].astype(np.float32) @ ACC_T
-            draw_line_strip(points, (64, 64, 64))
-            draw_arrow(ORIGIN, points[0], (32, 32, 32), 5, 10)
+            points = samples[:, 1:4] @ ACC_T
+            draw_line_strip(points, WHITE)
+            draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
 
-        _, show_acc_rot = imgui.checkbox("angular accel (deg/s)", show_acc_rot)
+        _, show_acc_rot = imgui.checkbox("angular accel (rad/s)", show_acc_rot)
+        if show_acc_rot:
+            points = samples[:, 4:7] @ ROT_T
+            draw_line_strip(points, WHITE)
+            draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
 
         imgui.end()
         imgui.render()
