@@ -111,9 +111,29 @@ def draw_axes():
     draw_arrow([0.0, 0.0, -0.5], [0.0, 0.0, 0.5], [0.0, 0.0, 1.0], 2.0, 5.0)
 
 
+T_2D = np.array([[1,0,0],[0,0,1],[0,1,0]])
+
+
+def draw_axes_2D():
+    glLineWidth(1.0)
+
+    draw_arrow(
+                [0.0, 0.0, 0.0] @ T_2D,
+               [3.0, 0.0, 0.0]  @ T_2D,
+               [0.0, 0.0, 0.0], 2.0, 5.0)
+    draw_arrow([0.0, -0.5, 0.0] @ T_2D,
+               [0.0, 0.5, 0.0]  @ T_2D,
+               [0.0, 0.0, 0.0], 2.0, 5.0)
+
+
+
 aruco_point_color = np.array(
     [[0.92, 0.26, 0.21], [0.20, 0.66, 0.33], [0.26, 0.52, 0.96], [0.98, 0.74, 0.02]]
 )
+
+RED = (1.0, 0.0, 0.0)
+GREEN = (0.0, 1.0, 0.0)
+BLUE = (0.0, 0.0, 1.0)
 
 
 def draw_points(points):
@@ -219,6 +239,47 @@ def update():
     glRotatef(angle_y, 0.0, 1.0, 0.0)
 
     draw_axes()
+
+
+def update_2D():
+    zoom_2D = 2.0
+
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    glOrtho(
+        viewport_left * zoom_2D,
+        viewport_right * zoom_2D,
+        -zoom_2D,
+        zoom_2D,
+        -1,
+        1
+    )
+    glTranslatef(viewport_left * zoom_2D + 0.1, -1.5, 0)
+
+    glMatrixMode(GL_MODELVIEW)
+    glLoadIdentity()
+
+
+def plot_line(x, y, color):
+    glBegin(GL_LINE_STRIP)
+    glColor3f(*color)
+    for i, x0 in enumerate(x):
+        glVertex3f(*[x0, y[i], 0] @ T_2D @ T)
+    glEnd()
+
+
+def draw_sensor(S_T):
+    glBegin(GL_LINES)
+    glColor3f(*RED)
+    glVertex4f(*ORIGIN @ S_T @ T)
+    glVertex4f(*[0.05, 0.00, 0.00] @ S_T @ T)
+    glColor3f(*GREEN)
+    glVertex4f(*ORIGIN @ S_T @ T)
+    glVertex4f(*[0.00, 0.04, 0.00] @ S_T @ T)
+    glColor3f(*BLUE)
+    glVertex4f(*ORIGIN @ S_T @ T)
+    glVertex4f(*[0.00, 0.00, 0.03] @ S_T @ T)
+    glEnd()
 
 
 def shm_create(_shared, name):
@@ -391,6 +452,7 @@ def main(
     imgui_impl = init_imgui(window)
 
     show_acc_lin, show_acc_rot = False, True
+    show_acc_lin_graph, show_acc_rot_graph = True, False
 
     while not stop_event.is_set() and not window_should_close(window):
         update()
@@ -441,6 +503,32 @@ def main(
         if imgui.button("save next buffer"):
             save_event.set()
             print("set save next buffer")
+
+        imgui.separator()
+
+        _, show_acc_lin_graph = imgui.checkbox("show linear accel graph", show_acc_lin_graph)
+        _, show_acc_rot_graph = imgui.checkbox("show angular accel graph", show_acc_rot_graph)
+
+        if show_acc_lin_graph or show_acc_rot_graph:
+            update_2D()
+            draw_axes_2D()
+
+            t = np.cumsum(acc[::-1, 0])
+
+        if show_acc_lin_graph:
+            ls = 0.5/9.81
+            acc_g_l = acc[::-1, [1,2,3]] * ls
+            plot_line(t, acc_g_l[:, 0], (1.0, 0.0, 0.0))
+            plot_line(t, acc_g_l[:, 1], (0.0, 1.0, 0.0))
+            plot_line(t, acc_g_l[:, 2], (0.0, 0.0, 1.0))
+
+        if show_acc_rot_graph:
+            rs = 0.5/(6*np.pi)
+            acc_g_r = acc[::-1, [4,5,6]] * rs
+            plot_line(t, acc_g_r[:, 0], (1.0, 0.0, 0.0))
+            plot_line(t, acc_g_r[:, 1], (0.0, 1.0, 0.0))
+            plot_line(t, acc_g_r[:, 2], (0.0, 0.0, 1.0))
+
 
         imgui.end()
         imgui.render()
