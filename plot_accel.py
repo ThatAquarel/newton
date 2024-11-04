@@ -236,13 +236,14 @@ def shm_recv(_shared, name):
     return existing_shm, shared
 
 
-def serial_process(port, stop_event, sr_shm, s_shm):
+def serial_process(port, stop_event, sr_shm, s_shm, c_shm):
     ser = serial.Serial(port=port, baudrate=115200, dsrdtr=os.name != "nt")
 
     print(f"connected serial port: {port}")
 
     _sr_shm, sample_rate = shm_recv(*sr_shm)
     _s_shm, samples = shm_recv(*s_shm)
+    _c_shm, cal_offset = shm_recv(*c_shm)
 
     dt_i = 0
     sample_dt_buffer_size = 128
@@ -272,7 +273,7 @@ def serial_process(port, stop_event, sr_shm, s_shm):
             sample_rate[:] = sample_total, 1 / np.mean(sample_dt_buffer)
 
     ser.close()
-    print("cleaup serial")
+    print("cleanup serial")
 
     stop_event.set()
 
@@ -284,7 +285,13 @@ WHITE = (1.0, 1.0, 1.0)
 ORIGIN = np.array([0.0, 0.0, 0.0])
 
 
-def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"):
+def main(
+    port,
+    buffer_size=1024,
+    sr_shm_name="sample_rate",
+    s_shm_name="samples",
+    c_shm_name="cal",
+):
     stop_event = Event()
 
     _sample_rate = np.array([0, 0], dtype=np.float32)
@@ -292,6 +299,9 @@ def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"
 
     _samples = np.empty((buffer_size, 7), dtype=np.float32)
     s_shm, samples = shm_create(_samples, s_shm_name)
+
+    _cal_offset = np.zeros(6, dtype=np.float32)
+    cal_shm, cal_offset = shm_create(_cal_offset, c_shm_name)
 
     def close_shm():
         sr_shm.close()
@@ -301,11 +311,17 @@ def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"
         s_shm.unlink()
         print("shm closed")
 
-    atexit.register(close_shm)        
+    atexit.register(close_shm)
 
     serial_manager = Process(
         target=serial_process,
-        args=(port, stop_event, (_sample_rate, sr_shm.name), (_samples, s_shm.name)),
+        args=(
+            port,
+            stop_event,
+            (_sample_rate, sr_shm.name),
+            (_samples, s_shm.name),
+            (_cal_offset, cal_shm.name),
+        ),
         daemon=True,
     )
 
@@ -331,15 +347,31 @@ def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"
 
         _, show_acc_lin = imgui.checkbox("linear accel (g)", show_acc_lin)
         if show_acc_lin:
-            points = samples[:, 1:4] @ ACC_T
+            points = samples[:, 1:4] @ ACC_T - cal_offset[0:3]
             draw_line_strip(points, WHITE)
             draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
 
-        _, show_acc_rot = imgui.checkbox("angular accel (rad/s)", show_acc_rot)
+        _, show_acc_rot = imgui.checkbox("angular accel (rad/s^2)", show_acc_rot)
         if show_acc_rot:
-            points = samples[:, 4:7] @ ROT_T
+            points = samples[:, 4:7] @ ROT_T - cal_offset[3:6]
             draw_line_strip(points, WHITE)
             draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
+
+        imgui.separator()
+
+        if imgui.button("calibrate"):
+            # cal_offset[0:3] = samples[0, 1:4] @ ACC_T
+            cal_offset[3:6] = samples[0, 4:7] @ ROT_T
+
+        imgui.text(f"accel offsets:")
+        imgui.text(f"x: {cal_offset[0]:.4f} g")
+        imgui.text(f"y: {cal_offset[1]:.4f} g")
+        imgui.text(f"z: {cal_offset[2]:.4f} g")
+        imgui.spacing()
+        imgui.text(f"gyro offsets:")
+        imgui.text(f"x: {cal_offset[3]:.4f} rad/s^2")
+        imgui.text(f"y: {cal_offset[4]:.4f} rad/s^2")
+        imgui.text(f"z: {cal_offset[5]:.4f} rad/s^2")
 
         imgui.end()
         imgui.render()
@@ -359,4 +391,3 @@ if __name__ == "__main__":
         main("COM10")
     else:
         main("/dev/ttyACM0")
-
