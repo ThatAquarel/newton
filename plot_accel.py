@@ -244,6 +244,7 @@ def shift_back(new, array):
 def serial_process(
     port,
     stop_event,
+    save_event,
     sr_shm,
     c_shm,
     acc_shm,
@@ -266,6 +267,8 @@ def serial_process(
     prev_time = time.time()
 
     sample_total = 0
+
+    start_saving = False
 
     while not stop_event.is_set():
         ser.read_until(b"\x7E")
@@ -294,6 +297,17 @@ def serial_process(
         if dt_i == 0:
             sample_rate[:] = sample_total, 1 / np.mean(sample_dt_buffer)
 
+        buffer_pos = sample_total % acc.shape[0]
+        if save_event.is_set() and buffer_pos == 0:
+            start_saving = True
+            save_event.clear()
+            print("start saving")
+        if start_saving and buffer_pos == (acc.shape[0] - 1):
+            start_saving = False
+            print("stop saving")
+            np.save(filename := f"{round(time.time())}_acc_export.npy", acc)
+            print(f"saved as: {filename}")
+
     ser.close()
     print("cleanup serial")
 
@@ -317,6 +331,7 @@ def main(
     dis_shm_name="dis",
 ):
     stop_event = Event()
+    save_event = Event()
 
     _sample_rate = np.array([0, 0], dtype=np.float32)
     sr_shm, sample_rate = shm_create(_sample_rate, sr_shm_name)
@@ -358,6 +373,7 @@ def main(
         args=(
             port,
             stop_event,
+            save_event,
             (_sample_rate, sr_shm.name),
             (_cal_offset, cal_shm.name),
             (_acc, acc_shm.name),
@@ -414,6 +430,14 @@ def main(
         if imgui.button("reset integration") or cal:
             vel[:] = 0.0
             dis[:] = 0.0
+
+        imgui.separator()
+
+        imgui.text(f"current buffer: {ts % buffer_size:.0f}/{buffer_size}")
+        imgui.text(f"buffer time: {ts % buffer_size / sr :.2f} s")
+        if imgui.button("save next buffer"):
+            save_event.set()
+            print("set save next buffer")
 
         imgui.end()
         imgui.render()
