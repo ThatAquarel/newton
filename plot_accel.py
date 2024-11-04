@@ -278,7 +278,7 @@ def serial_process(port, stop_event, sr_shm, s_shm, c_shm):
     stop_event.set()
 
 
-ACC_T = np.eye(3) / -256
+ACC_T = np.eye(3) / -256 * 9.81
 ROT_T = np.eye(3) / 14.375 * np.pi / 180
 
 WHITE = (1.0, 1.0, 1.0)
@@ -345,7 +345,7 @@ def main(
 
         imgui.separator()
 
-        _, show_acc_lin = imgui.checkbox("linear accel (g)", show_acc_lin)
+        _, show_acc_lin = imgui.checkbox("linear accel (m/s^2)", show_acc_lin)
         if show_acc_lin:
             points = samples[:, 1:4] @ ACC_T
             draw_line_strip(points, WHITE)
@@ -360,7 +360,7 @@ def main(
         imgui.separator()
 
         if imgui.button("calibrate gyro"):
-            cal_offset[:] = samples[0, 4:7] @ ROT_T
+            cal_offset[:] = np.mean(samples[:, 4:7], axis=0) @ ROT_T
 
         imgui.text(f"gyro offsets:")
         imgui.text(f"x: {cal_offset[0]:.4f} rad/s^2")
