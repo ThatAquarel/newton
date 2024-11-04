@@ -433,7 +433,7 @@ def main(
         imgui.separator()
 
         imgui.text(f"current buffer: {ts % buffer_size:.0f}/{buffer_size}")
-        imgui.text(f"buffer time: {ts % buffer_size / sr :.2f} s")
+        imgui.text(f"buffer time: {buffer_size / sr :.2f} s")
         if imgui.button("save next buffer"):
             save_event.set()
             print("set save next buffer")
