@@ -240,6 +240,12 @@ def shift_back(new, array):
     array[0] = new
 
 
+DATA_T = np.eye(7) * np.array([
+    1e-6,
+    *[1 / -256 * 9.81,] * 3,
+    *[1 / 14.375 * np.pi / 180,] * 3
+])
+
 def serial_process(
     port,
     stop_event,
@@ -277,12 +283,12 @@ def serial_process(
 
         data = struct.unpack("<L6h", buf)
 
-        acc[0, 4:7] -= cal_offset
         dt = acc[0, 0]
         dvdt = (acc[0, 1:7] + acc[1, 1:7]) * dt / 2
         dsdt = (vel[0] + vel[1]) * dt / 2
 
-        shift_back(data, acc)
+        shift_back(data @ DATA_T, acc)
+        acc[0, 4:7] -= cal_offset
         shift_back(dvdt + vel[0], vel)
         shift_back(dsdt + dis[0], dis)
 
@@ -312,9 +318,6 @@ def serial_process(
 
     stop_event.set()
 
-
-ACC_T = np.eye(3) / -256 * 9.81
-ROT_T = np.eye(3) / 14.375 * np.pi / 180
 
 WHITE = (1.0, 1.0, 1.0)
 ORIGIN = np.array([0.0, 0.0, 0.0])
@@ -404,20 +407,21 @@ def main(
 
         _, show_acc_lin = imgui.checkbox("linear accel (m/s^2)", show_acc_lin)
         if show_acc_lin:
-            points = acc[:, 1:4] @ ACC_T
+            points = acc[:, 1:4]
             draw_line_strip(points, WHITE)
             draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
 
         _, show_acc_rot = imgui.checkbox("angular accel (rad/s^2)", show_acc_rot)
         if show_acc_rot:
-            points = acc[:, 4:7] @ ROT_T - cal_offset
+            # points = acc[:, 4:7] - cal_offset
+            points = acc[:, 4:7]
             draw_line_strip(points, WHITE)
             draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
 
         imgui.separator()
 
         if cal := imgui.button("calibrate gyro"):
-            cal_offset[:] = np.mean(acc[:, 4:7], axis=0) @ ROT_T
+            cal_offset[:] = np.mean(acc[:, 4:7], axis=0)
 
         imgui.text(f"gyro offsets:")
         imgui.text(f"x: {cal_offset[0]:.4f} rad/s^2")
