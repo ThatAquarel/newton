@@ -10,8 +10,7 @@ import serial
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
 
-from queue import Empty
-from multiprocessing import Process, Queue, Event, shared_memory
+from multiprocessing import Process, Event, shared_memory
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
