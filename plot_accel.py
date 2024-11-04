@@ -300,7 +300,7 @@ def main(
     _samples = np.empty((buffer_size, 7), dtype=np.float32)
     s_shm, samples = shm_create(_samples, s_shm_name)
 
-    _cal_offset = np.zeros(6, dtype=np.float32)
+    _cal_offset = np.zeros(3, dtype=np.float32)
     cal_shm, cal_offset = shm_create(_cal_offset, c_shm_name)
 
     def close_shm():
@@ -347,31 +347,25 @@ def main(
 
         _, show_acc_lin = imgui.checkbox("linear accel (g)", show_acc_lin)
         if show_acc_lin:
-            points = samples[:, 1:4] @ ACC_T - cal_offset[0:3]
+            points = samples[:, 1:4] @ ACC_T
             draw_line_strip(points, WHITE)
             draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
 
         _, show_acc_rot = imgui.checkbox("angular accel (rad/s^2)", show_acc_rot)
         if show_acc_rot:
-            points = samples[:, 4:7] @ ROT_T - cal_offset[3:6]
+            points = samples[:, 4:7] @ ROT_T - cal_offset
             draw_line_strip(points, WHITE)
             draw_arrow(ORIGIN, points[0], WHITE, 5, 10)
 
         imgui.separator()
 
-        if imgui.button("calibrate"):
-            # cal_offset[0:3] = samples[0, 1:4] @ ACC_T
-            cal_offset[3:6] = samples[0, 4:7] @ ROT_T
+        if imgui.button("calibrate gyro"):
+            cal_offset[:] = samples[0, 4:7] @ ROT_T
 
-        imgui.text(f"accel offsets:")
-        imgui.text(f"x: {cal_offset[0]:.4f} g")
-        imgui.text(f"y: {cal_offset[1]:.4f} g")
-        imgui.text(f"z: {cal_offset[2]:.4f} g")
-        imgui.spacing()
         imgui.text(f"gyro offsets:")
-        imgui.text(f"x: {cal_offset[3]:.4f} rad/s^2")
-        imgui.text(f"y: {cal_offset[4]:.4f} rad/s^2")
-        imgui.text(f"z: {cal_offset[5]:.4f} rad/s^2")
+        imgui.text(f"x: {cal_offset[0]:.4f} rad/s^2")
+        imgui.text(f"y: {cal_offset[1]:.4f} rad/s^2")
+        imgui.text(f"z: {cal_offset[2]:.4f} rad/s^2")
 
         imgui.end()
         imgui.render()
