@@ -1,3 +1,4 @@
+import atexit
 import os
 import struct
 import time
@@ -8,8 +9,6 @@ import serial
 
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
-
-import dearpygui.dearpygui as dpg
 
 from queue import Empty
 from multiprocessing import Process, Queue, Event, shared_memory
@@ -294,6 +293,16 @@ def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"
     _samples = np.empty((buffer_size, 7), dtype=np.float32)
     s_shm, samples = shm_create(_samples, s_shm_name)
 
+    def close_shm():
+        sr_shm.close()
+        sr_shm.unlink()
+
+        s_shm.close()
+        s_shm.unlink()
+        print("shm closed")
+
+    atexit.register(close_shm)        
+
     serial_manager = Process(
         target=serial_process,
         args=(port, stop_event, (_sample_rate, sr_shm.name), (_samples, s_shm.name)),
@@ -341,8 +350,13 @@ def main(port, buffer_size=1024, sr_shm_name="sample_rate", s_shm_name="samples"
         glfw.poll_events()
 
     stop_event.set()
+
     terminate()
 
 
 if __name__ == "__main__":
-    main("COM10")
+    if os.name == "nt":
+        main("COM10")
+    else:
+        main("/dev/ttyACM0")
+
