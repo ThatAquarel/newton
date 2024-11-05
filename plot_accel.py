@@ -529,6 +529,34 @@ def main(
             plot_line(t, acc_g_r[:, 1], (0.0, 1.0, 0.0))
             plot_line(t, acc_g_r[:, 2], (0.0, 0.0, 1.0))
 
+        # y, b, a = dis[3:6]
+        # y_t = np.array([
+        #     [np.cos(a), np.sin(a), 0, 0],
+        #     [-np.sin(a), np.cos(a), 0, 0],
+        #     [0, 0, 1, 0],
+        #     [0, 0, 0, 1]
+        # ])
+        # p_t = np.array([
+        #     [np.cos(b), 0, -np.sin(b), 0],
+        #     [0, 1, 0, 0],
+        #     [np.sin(b), 0, np.cos(b), 0],
+        #     [0,0,0,1]
+        # ])
+        # r_t = np.array([
+        #     [1, 0, 0, 0],
+        #     [0, np.cos(y), np.sin(y), 0],
+        #     [0, -np.sin(y), np.cos(y), 0],
+        #     [0, 0,0,1]
+        # ])
+        # t_t = np.array([
+        #     [1,0,0,0],
+        #     [0,1,0,0],
+        #     [0,0,1,0],
+        #     [tx,ty,tz,1],
+        # ])
+
+        # point = [ax,ay, az, 1]
+        # point_t = point @ y_t @ p_t @ r_t @ t_t
 
         imgui.end()
         imgui.render()
