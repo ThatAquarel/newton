@@ -295,8 +295,12 @@ def shift_back(new, array):
 DATA_T = np.eye(7) * np.array(
     [
         1e-6,
+        # *[
+        #     1 / 256 * 9.81,
+        # ]
+        # * 3,
         *[
-            1 / 256 * 9.81,
+            1,
         ]
         * 3,
         *[
@@ -305,6 +309,25 @@ DATA_T = np.eye(7) * np.array(
         * 3,
     ]
 )
+
+ACCEL_CAL = np.array(
+    [
+        [3.74565944e-02, 5.47801144e-04, -1.29205117e-03, -1.41535595e-04],
+        [-2.52692280e-06, 3.82816643e-06, 1.56933766e-05, 1.47016881e-05],
+        [-2.23799652e-04, 3.69483978e-02, -2.08327765e-04, 2.28314457e-04],
+        [-3.95537063e-06, 3.85893009e-06, 1.59897209e-05, 1.42687695e-05],
+        [3.99417069e-04, -4.47370170e-04, 3.94730233e-02, 7.51391635e-04],
+        [-2.24582277e-06, 3.50554274e-06, 1.46161465e-05, 1.57830345e-05],
+        [-5.05255184e-06, 8.02234081e-06, 2.97957140e-05, 6.37418452e-07],
+    ]
+)
+
+
+def accel_cal(a):
+    a = np.repeat(a, 2)
+    a[1::2] **= 2
+    a = [*a, 1]
+    return (a @ ACCEL_CAL)[:-1]
 
 
 def rotation_matrix(rx, ry, rz):
@@ -359,16 +382,32 @@ def serial_process(
     a_cal = np.zeros(3, np.float32)
     w_cal = np.zeros(3, np.float32)
 
+    a_i = 0
+    a_cache = np.zeros((512, 3), np.float32)
+
     while not stop_event.is_set():
         ser.read_until(b"\x7E")
         buf = ser.read(16)
         if ser.read(1) != b"\x7D":
             break
 
-        data = struct.unpack("<L6h", buf) @ DATA_T
+        data = struct.unpack("<L6h", buf)
+
+        data = data @ DATA_T
+
+        if cal_event.is_set() or a_i != 0:
+            a_cache[a_i] = data[1:4]
+            a_i += 1
+
+            if a_i == len(a_cache):
+                a_i = 0
+                print(np.mean(a_cache, axis=0))
+
         dt, a, w = data[0], data[1:4], data[4:7]
+        a = accel_cal(a)
 
         if cal_event.is_set():
+            print(a)
             r[:], v[:], s[:] = 0, 0, 0
             a_cal[:] = -a
             w_cal[:] = -w
@@ -379,7 +418,9 @@ def serial_process(
 
         # a = a @ m + a_cal
         a = a @ m + a_cal
+        # a[np.abs(a) < 0.025] = 0
         v = dt * a + v
+        # v[np.abs(v) < 0.001] = 0
         s = dt * v + s
 
         realtime[:] = s
