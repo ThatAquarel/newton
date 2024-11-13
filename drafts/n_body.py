@@ -1,3 +1,5 @@
+import time
+
 import glfw
 import numpy as np
 
@@ -200,101 +202,64 @@ def update():
     draw_axes()
 
 
-def rotation_matrix(rx, ry, rz):
-    y_t = np.array(
-        [
-            [np.cos(rz), np.sin(rz), 0, 0],
-            [-np.sin(rz), np.cos(rz), 0, 0],
-            [0, 0, 1, 0],
-            [0, 0, 0, 1],
-        ]
-    )
-    p_t = np.array(
-        [
-            [np.cos(ry), 0, np.sin(ry), 0],
-            [0, 1, 0, 0],
-            [-np.sin(ry), 0, np.cos(ry), 0],
-            [0, 0, 0, 1],
-        ]
-    )
-    r_t = np.array(
-        [
-            [1, 0, 0, 0],
-            [0, np.cos(rx), np.sin(rx), 0],
-            [0, -np.sin(rx), np.cos(rx), 0],
-            [0, 0, 0, 1],
-        ]
-    )
-
-    # return y_t @ p_t @ r_t
-    return r_t @ p_t @ y_t
-
-
-def main():
-    evan_T = rotation_matrix(np.pi/6, 0, 0)
-
+# def main(n_body=2, G=6.6743e-11):
+def main(n_body=2, G=6.6743e-2):
     window = init()
     imgui_impl = init_imgui(window)
 
-    n_samples = 1024
-
-    a = np.array(
+    # m = np.array([300, 100], dtype=np.float32)
+    m = np.array([3,4, 2], dtype=np.float32)
+    a = np.zeros((n_body, 3), dtype=np.float32)
+    v = np.array(
         [
-            [1.0, 0.0, -9.81],
-        ]
-        * n_samples,
+            [0, 0.25, 0.1],
+            [0, -0.25, 0.1],
+        ],
         dtype=np.float32,
     )
-    a_g = np.zeros((n_samples, 3), dtype=np.float32)
-    v = np.zeros((n_samples, 3), dtype=np.float32)
-    v[-1] = [0.0, -1.0, 0.0]
-    s = np.zeros((n_samples, 3), dtype=np.float32)
-
-    w = np.array(
-        [
-            [0.0, 0.0, 1.0],
-        ]
-        * n_samples,
-        dtype=np.float32,
-    )
-    r = np.zeros((n_samples, 3), dtype=np.float32)
-
-    dt = np.array(
-        [
-            0.025,
-        ]
-        * n_samples,
-        dtype=np.float32,
-    )
-
-    n = 0
+    s = np.array([[1, 0, 0], [0, 1, 0],[0,0,0]], dtype=np.float32)
 
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_MULTISAMPLE)
 
+    start = time.time()
+    dt = 0
+
     while not window_should_close(window):
-        r[n] = dt[n] * w[n] + r[n - 1]
-
-        mat = rotation_matrix(*r[n])[0:3, 0:3]
-
-        a_g[n] = a[n] @ mat + [0.0, 0.0, 9.8]
-
-        v[n] = dt[n] * a_g[n] + v[n - 1]
-        s[n] = dt[n] * v[n] + s[n - 1]
-
-        n = n + 1
-        if n >= n_samples:
-            v[:] = 0
-            s[:] = 0
-            r[:] = 0
-            n = 0
-            v[-1] = [0.0, -1.0, 0.0]
-
         update()
-        draw_points(s[:n] @ evan_T[0:3, 0:3])
+
+        for body in range(n_body):
+            others = [n for n in range(n_body) if n != body]
+
+            m_a = m[body]
+            F_a = np.zeros(3, dtype=np.float32)
+            for j in others:
+
+                m_b = m[j]
+                s_a, s_b = s[body], s[j]
+
+                ds = s_b - s_a
+                d = np.linalg.norm(ds)
+                Fg = G * m_a * m_b / d**2
+
+                F_a += ds / d * Fg
+
+            a[body] = F_a / m_a
+            v[body] = a[body] * dt + v[body]
+            s[body] = v[body] * dt + s[body]
+
+            glPointSize(m[body] * 10)
+            glBegin(GL_POINTS)
+            glColor3f(1, 1, 1)
+            glVertex3f(*s[body] @ T)
+            glEnd()
 
         glfw.swap_buffers(window)
         glfw.poll_events()
+
+        current = time.time()
+        dt = current - start
+        start = current
 
     terminate()
 
